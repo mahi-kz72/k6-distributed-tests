@@ -1,0 +1,98 @@
+# RBAC configuration for k6 distributed testing
+# This is typically handled by the k6-operator installation,
+# but included here for reference and custom scenarios
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k6-test-runner
+  namespace: k6-tests
+  labels:
+    app.kubernetes.io/name: k6
+    app.kubernetes.io/component: test-runner
+
+---
+# Role for running k6 tests
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: k6-test-runner
+  namespace: k6-tests
+rules:
+  # Allow creating and managing pods for test execution
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "pods/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Allow creating and managing services
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Allow creating and managing configmaps
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Allow creating and managing persistent volume claims
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Allow creating and managing events
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  
+  # Allow managing TestRuns (if using custom operator)
+  - apiGroups: ["k6.io"]
+    resources: ["testruns"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+---
+# RoleBinding to bind the ServiceAccount to the Role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: k6-test-runner
+  namespace: k6-tests
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: k6-test-runner
+subjects:
+  - kind: ServiceAccount
+    name: k6-test-runner
+    namespace: k6-tests
+
+---
+# ClusterRole for cross-namespace operations (if needed)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k6-test-runner-cluster
+rules:
+  # Allow listing nodes (for resource planning)
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  
+  # Allow managing TestRuns across namespaces
+  - apiGroups: ["k6.io"]
+    resources: ["testruns"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+---
+# ClusterRoleBinding (use sparingly - prefer RoleBinding)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k6-test-runner-cluster
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k6-test-runner-cluster
+subjects:
+  - kind: ServiceAccount
+    name: k6-test-runner
+    namespace: k6-tests

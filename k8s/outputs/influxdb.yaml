@@ -1,0 +1,120 @@
+# InfluxDB output configuration for k6 test results
+# This example shows how to configure k6 to send results to InfluxDB
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: influxdb-config
+  namespace: k6-tests
+  labels:
+    app.kubernetes.io/name: k6
+    app.kubernetes.io/component: output
+data:
+  # InfluxDB connection configuration
+  INFLUXDB_URL: "http://influxdb:8086"
+  INFLUXDB_DATABASE: "k6"
+  INFLUXDB_USERNAME: "k6"
+  INFLUXDB_PASSWORD: "k6password"
+  INFLUXDB_TAGS: "test=distributed,environment=kubernetes"
+
+---
+# Example InfluxDB deployment (for testing purposes)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: influxdb
+  namespace: k6-tests
+  labels:
+    app.kubernetes.io/name: influxdb
+    app.kubernetes.io/component: database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: influxdb
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: influxdb
+    spec:
+      containers:
+      - name: influxdb
+        image: influxdb:1.8
+        ports:
+        - containerPort: 8086
+        env:
+        - name: INFLUXDB_DB
+          value: "k6"
+        - name: INFLUXDB_ADMIN_USER
+          value: "admin"
+        - name: INFLUXDB_ADMIN_PASSWORD
+          value: "adminpassword"
+        - name: INFLUXDB_USER
+          value: "k6"
+        - name: INFLUXDB_USER_PASSWORD
+          value: "k6password"
+        volumeMounts:
+        - name: influxdb-storage
+          mountPath: /var/lib/influxdb
+      volumes:
+      - name: influxdb-storage
+        emptyDir: {}
+
+---
+# InfluxDB service
+apiVersion: v1
+kind: Service
+metadata:
+  name: influxdb
+  namespace: k6-tests
+  labels:
+    app.kubernetes.io/name: influxdb
+spec:
+  selector:
+    app.kubernetes.io/name: influxdb
+  ports:
+  - port: 8086
+    targetPort: 8086
+  type: ClusterIP
+
+---
+# Example TestRun with InfluxDB output
+apiVersion: k6.io/v1alpha1
+kind: TestRun
+metadata:
+  name: k6-test-with-influxdb
+  namespace: k6-tests
+  labels:
+    app.kubernetes.io/name: k6
+    app.kubernetes.io/component: testrun
+    output: influxdb
+spec:
+  parallelism: 3
+  script:
+    configMap:
+      name: k6-scripts
+      file: test.js
+  runner:
+    image: grafana/k6:latest
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    args:
+      - run
+      - --out=influxdb=http://influxdb:8086/k6
+      - --out=json=/tmp/results.json
+      - /scripts/test.js
+    env:
+      - name: K6_INFLUXDB_ORGANIZATION
+        value: "k6"
+      - name: K6_INFLUXDB_BUCKET
+        value: "k6"
+      - name: K6_INFLUXDB_TOKEN
+        value: "your-influxdb-token"
+  execution:
+    timeout: "5m"
+    restartPolicy: Never

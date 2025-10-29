@@ -1,0 +1,29 @@
+# Kustomization for basic test with different parallelism levels
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Base configuration
+resources:
+  - ../../namespace.yaml
+  - ../../scripts-configmap.yaml
+  - ../../testrun-basic.yaml
+
+# Patches to modify parallelism
+patches:
+  # Override parallelism for basic test
+  - target:
+      kind: TestRun
+      name: k6-basic-test
+    patch: |-
+      - op: replace
+        path: /spec/parallelism
+        value: 3
+
+# Common labels for this overlay
+commonLabels:
+  app.kubernetes.io/name: k6
+  app.kubernetes.io/component: basic-test
+  test.parallelism: "3"
+
+# Namespace
+namespace: k6-tests

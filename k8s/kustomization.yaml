@@ -1,0 +1,57 @@
+# Kustomization file for k6 distributed testing
+# This allows easy management of different test configurations
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Base resources that are common to all configurations
+resources:
+  - namespace.yaml
+  - scripts-configmap.yaml
+  - testrun-basic.yaml
+  - testrun-advanced.yaml
+
+# Common labels applied to all resources
+commonLabels:
+  app.kubernetes.io/name: k6
+  app.kubernetes.io/part-of: k6-distributed-testing
+
+# Common annotations
+commonAnnotations:
+  k6.io/version: "latest"
+  k6.io/operator: "k6-operator"
+
+# Namespace for all resources
+namespace: k6-tests
+
+# Image replacement (if you want to use a different k6 image)
+# images:
+#   - name: grafana/k6
+#     newTag: latest
+
+# Patches for common configurations
+patches:
+  # Patch to add resource quotas for production
+  - target:
+      kind: TestRun
+      name: k6-basic-test
+    patch: |-
+      - op: add
+        path: /spec/runner/resources/limits/cpu
+        value: "1000m"
+  - target:
+      kind: TestRun
+      name: k6-advanced-test
+    patch: |-
+      - op: add
+        path: /spec/runner/resources/limits/cpu
+        value: "2000m"
+
+# ConfigMap generator for environment-specific configurations
+configMapGenerator:
+  - name: k6-config
+    literals:
+      - K6_LOG_LEVEL=info
+      - K6_NO_THRESHOLDS=false
+    options:
+      disableNameSuffixHash: true
