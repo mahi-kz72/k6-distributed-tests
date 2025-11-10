@@ -1,310 +1,354 @@
-# k6 Distributed Load Testing with Kubernetes + k6-operator
+# k6 Monitoring Stack: InfluxDB v2 + Grafana
 
-This setup provides a fully distributed k6 load testing environment using Kubernetes and the official k6-operator, following Grafana's official documentation for distributed testing.
+**Always-on monitoring infrastructure for collecting and visualizing k6 load testing metrics from external runners.**
+
+> ⚠️ **Important**: This repository contains **ONLY the monitoring infrastructure**.  
+> k6 test scripts should be run externally and send metrics to this centralized stack.
+
+---
 
 ## 🏗️ Architecture
 
-- **k6-operator**: Kubernetes operator that manages TestRun resources
-- **TestRun CRD**: Custom Resource Definition for defining distributed tests
-- **Parallel Pods**: Each pod executes a unique shard of the test automatically
-- **ConfigMap**: Test scripts are stored as Kubernetes ConfigMaps
-- **No Master/Worker**: Distribution is handled by the operator via parallelism
-
-## 📁 Project Structure
-
 ```
-k6/
-├── k8s/                      # Kubernetes manifests
-│   ├── namespace.yaml        # k6-tests namespace
-│   ├── scripts-configmap.yaml # Test scripts as ConfigMap
-│   ├── testrun-basic.yaml    # Basic test TestRun
-│   ├── testrun-advanced.yaml # Advanced test TestRun
-│   ├── rbac.yaml            # RBAC configuration
-│   ├── kustomization.yaml   # Kustomize base configuration
-│   ├── operator-install.md  # Operator installation guide
-│   ├── overlays/            # Kustomize overlays for scaling
-│   │   ├── basic/           # Basic test overlays
-│   │   └── advanced/        # Advanced test overlays
-│   └── outputs/             # Output configurations
-│       ├── influxdb.yaml    # InfluxDB output example
-│       ├── prometheus.yaml  # Prometheus output example
-│       └── README.md        # Output configuration guide
-├── scripts/                 # Test scripts (for reference)
-│   ├── test.js             # Basic test script
-│   └── advanced-test.js    # Advanced test script
-├── Makefile                # Convenient management commands
-├── GETTING_STARTED.md      # Quick start guide
-├── README.md              # This file
-└── .gitignore            # Git ignore file
+External k6 Runners → InfluxDB v2 (Storage) → Grafana (Dashboards)
 ```
 
-## 🚀 Quick Start
+**Components:**
+- **InfluxDB v2** (2.7): Time-series database with persistent storage (10Gi PVC)
+- **Grafana** (latest): Visualization platform with 5 pre-configured dashboards (5Gi PVC)
+- **6 Buckets**: `k6-metrics` (default) + 5 team-specific buckets
 
-### 1. Install k6-operator
+---
+
+## 🚀 Quick Deployment
+
+### Option 1: Automated Setup (Recommended) ⚡
+
+Run the complete setup script that deploys everything and configures Grafana automatically:
 
 ```bash
-# Install the k6-operator
-kubectl apply -f https://github.com/grafana/k6-operator/releases/latest/download/k6-operator.yaml
-
-# Wait for operator to be ready
-kubectl wait --for=condition=available --timeout=300s deployment/k6-operator-controller-manager -n k6-operator-system
+./setup-complete-stack.sh
 ```
 
-### 2. Create Namespace and Apply Scripts
+This script will:
+- ✅ Deploy InfluxDB + Grafana to Kubernetes
+- ✅ Wait for pods to be ready
+- ✅ Set up port-forwards (InfluxDB:8086, Grafana:3000)
+- ✅ Configure InfluxDB datasource in Grafana
+- ✅ Import pre-built k6 dashboard automatically
+- ✅ Display all credentials and next steps
+
+**After setup completes:**
+1. Open http://localhost:3000 (admin/admin123)
+2. Navigate to **Dashboards** → **k6 Load Testing Dashboard**
+3. Run your k6 tests and watch metrics in real-time!
+
+### Option 2: Manual Setup
+
+#### 1. Deploy the Stack
 
 ```bash
-# Create namespace and apply test scripts
-kubectl apply -f k8s/namespace.yaml
-kubectl -n k6-tests apply -f k8s/scripts-configmap.yaml
+# Deploy everything
+kubectl apply -k k8s/
+
+# Verify pods are running
+kubectl -n k6-tests get pods
 ```
 
-### 3. Run Your First Test
+Expected output:
+```
+NAME                        READY   STATUS    RESTARTS   AGE
+influxdb-xxxxx              1/1     Running   0          1m
+grafana-xxxxx               1/1     Running   0          1m
+```
+
+#### 2. Get Credentials
 
 ```bash
-# Basic test with 3 parallel pods
-kubectl -n k6-tests apply -f k8s/testrun-basic.yaml
-
-# Or advanced test with 5 parallel pods
-kubectl -n k6-tests apply -f k8s/testrun-advanced.yaml
+# Get InfluxDB token
+kubectl -n k6-tests get secret influxdb-auth -o jsonpath='{.data.admin-token}' | base64 -d
 ```
 
-### 4. Monitor and View Results
+**Save this token!** External k6 runners need it.
+
+### 3. Access Grafana
 
 ```bash
-# Watch test progress
-kubectl -n k6-tests get testruns,pods -w
+# Port-forward to Grafana
+kubectl -n k6-tests port-forward service/grafana 3000:3000
 
-# View logs from test pods
-kubectl -n k6-tests logs -l testrun=k6-basic-test --tail=50
+# Open in browser
+open http://localhost:3000
 ```
 
-## 📋 Available Commands
+**Default credentials:**
+- Username: `admin`
+- Password: `admin123` (⚠️ change in production!)
 
-### Using Makefile (Recommended)
+---
+
+## 📊 Running External k6 Tests
+
+### From Local Machine
 
 ```bash
-make help                          # Show all available commands
-make install-operator              # Install k6-operator
-make create-ns                     # Create k6-tests namespace
-make apply-scripts                 # Apply test scripts ConfigMap
-make apply-basic                   # Run basic test (3 pods)
-make apply-advanced                # Run advanced test (5 pods)
-make watch-basic                   # Watch basic test progress
-make logs-basic                    # Show basic test logs
-make clean-basic                   # Clean up basic test
-make scale-basic-10                # Run basic test with 10 pods
-make quick-start                   # Complete quick start workflow
+# 1. Get token
+export INFLUX_TOKEN=$(kubectl -n k6-tests get secret influxdb-auth -o jsonpath='{.data.admin-token}' | base64 -d)
+
+# 2. Port-forward InfluxDB (for local testing)
+kubectl -n k6-tests port-forward service/influxdb 8086:8086 &
+
+# 3. Run k6 test
+export K6_OUT="influxdb_v2=url=http://localhost:8086,token=$INFLUX_TOKEN,organization=k6-org,bucket=k6-metrics"
+k6 run your-test.js
 ```
 
-### Direct kubectl Commands
+### Team-Specific Buckets
 
 ```bash
-# Basic test operations
-kubectl -n k6-tests apply -f k8s/testrun-basic.yaml
-kubectl -n k6-tests get testruns,pods
-kubectl -n k6-tests logs -l testrun=k6-basic-test
+# Team 1
+export K6_OUT="influxdb_v2=url=http://localhost:8086,token=$TOKEN,organization=k6-org,bucket=team1-metrics"
+k6 run test.js
 
-# Scaling with Kustomize
-kubectl apply -k k8s/overlays/basic/scale-5
-kubectl apply -k k8s/overlays/advanced/scale-10
-
-# Cleanup
-kubectl -n k6-tests delete testruns --all
-kubectl delete namespace k6-tests
+# Team 2
+export K6_OUT="influxdb_v2=url=http://localhost:8086,token=$TOKEN,organization=k6-org,bucket=team2-metrics"
+k6 run test.js
 ```
 
-## 📊 Test Scripts
+### From CI/CD (GitHub Actions Example)
 
-| Script | Description | Duration | Users | Use Case |
-|--------|-------------|----------|-------|----------|
-| `test.js` | Basic HTTP tests | 2 minutes | 10 | Quick validation |
-| `advanced-test.js` | Intensive load test | 7 minutes | 50 | Performance testing |
+```yaml
+name: Load Test
+on: [workflow_dispatch]
+
+jobs:
+  k6-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run k6
+        uses: grafana/k6-action@v0.3.1
+        with:
+          filename: test.js
+        env:
+          K6_OUT: influxdb_v2=url=${{ secrets.INFLUX_URL }},token=${{ secrets.INFLUX_TOKEN }},organization=k6-org,bucket=team1-metrics
+```
+
+**Required GitHub Secrets:**
+- `INFLUX_URL`: InfluxDB endpoint
+- `INFLUX_TOKEN`: InfluxDB admin token
+
+---
+
+## 📈 Available Dashboards
+
+Navigate to: **Dashboards → k6 Load Testing**
+
+| Dashboard | Bucket | Metrics Displayed |
+|-----------|--------|-------------------|
+| Team 1 - k6 Performance Metrics | `team1-metrics` | HTTP RPS, Response Time (p95), VUs, Error Rate |
+| Team 2 - k6 Performance Metrics | `team2-metrics` | HTTP RPS, Response Time (p95), VUs, Error Rate |
+| Team 3 - k6 Performance Metrics | `team3-metrics` | HTTP RPS, Response Time (p95), VUs, Error Rate |
+| Team 4 - k6 Performance Metrics | `team4-metrics` | HTTP RPS, Response Time (p95), VUs, Error Rate |
+| Team 5 - k6 Performance Metrics | `team5-metrics` | HTTP RPS, Response Time (p95), VUs, Error Rate |
+
+**Default bucket**: `k6-metrics` (can be viewed in any dashboard)
+
+---
 
 ## 🔧 Configuration
 
-### TestRun Configuration
-
-The TestRun manifests include:
-
-- **Parallelism**: Number of parallel pods to run the test
-- **Script**: Reference to ConfigMap containing test script
-- **Resources**: CPU and memory requests/limits per pod
-- **Environment**: k6 configuration and environment variables
-- **Output**: Result output configuration
-
-### Scaling Test Execution
+### Change Default Credentials
 
 ```bash
-# Scale using Kustomize overlays
-kubectl apply -k k8s/overlays/basic/scale-10
+# InfluxDB token
+kubectl -n k6-tests edit secret influxdb-auth
 
-# Or edit TestRun directly
-kubectl -n k6-tests edit testrun k6-basic-test
+# Grafana password
+kubectl -n k6-tests set env deployment/grafana GF_SECURITY_ADMIN_PASSWORD=new-password
 ```
 
-### Custom Test Scripts
+### Enable External Access (Optional)
+
+Uncomment the Ingress section in `k8s/outputs/influxdb-deployment.yaml`:
+
+```yaml
+# Change domain from influxdb.example.com to your domain
+# Enable TLS with cert-manager if needed
+```
+
+### Storage Configuration
+
+**Default:** PersistentVolumeClaim
+- InfluxDB: 10Gi
+- Grafana: 5Gi
+
+Update storage size in deployment files if needed.
+
+---
+
+## 🛠️ Management Commands
 
 ```bash
-# Edit the ConfigMap to add your test script
-kubectl -n k6-tests edit configmap k6-scripts
+# Check pod status
+kubectl -n k6-tests get pods,pvc,svc
 
-# Or create a new test file and update the ConfigMap
-kubectl -n k6-tests create configmap my-test-script --from-file=my-test.js
+# View InfluxDB logs
+kubectl -n k6-tests logs deployment/influxdb
+
+# View Grafana logs
+kubectl -n k6-tests logs deployment/grafana
+
+# Delete stack (keeps namespace)
+kubectl delete -k k8s/
+
+# Delete everything including data
+kubectl delete namespace k6-tests
 ```
 
-## 📈 Viewing Results
+---
 
-### Real-time Monitoring
+## 🔍 Verify Data Flow
+
+### 1. Check InfluxDB Data
 
 ```bash
-# Follow all logs
-kubectl -n k6-tests logs -f -l testrun=k6-basic-test
+kubectl -n k6-tests port-forward service/influxdb 8086:8086
 
-# Follow specific pod logs
-kubectl -n k6-tests logs -f <pod-name>
+# List buckets
+kubectl -n k6-tests exec deployment/influxdb -- \
+  influx bucket list --org k6-org
 
-# View container status
-kubectl -n k6-tests get pods -o wide
+# Query recent data
+kubectl -n k6-tests exec deployment/influxdb -- \
+  influx query 'from(bucket:"k6-metrics") |> range(start:-1h) |> limit(n:10)' --org k6-org
 ```
 
-### Test Results
+### 2. Verify Grafana Datasource
 
-Results are available through:
+1. Login to Grafana (http://localhost:3000)
+2. **Configuration** → **Data Sources** → **InfluxDB-k6**
+3. Click **Test** button
+4. Should show: "Data source is working" ✅
 
-- **Console logs**: Real-time metrics and progress
-- **JSON output**: Detailed metrics (if configured)
-- **External systems**: InfluxDB, Prometheus (see `k8s/outputs/`)
+---
 
-### Export Results
+## 🔒 Security Checklist
+
+Before production deployment:
+
+- [ ] Change InfluxDB admin token in Secret
+- [ ] Change Grafana admin password
+- [ ] Configure Ingress with your domain
+- [ ] Enable TLS/HTTPS with cert-manager
+- [ ] Create limited-scope tokens for teams
+- [ ] Implement NetworkPolicy for access control
+- [ ] Set up data retention policies
+- [ ] Configure regular backups
+
+---
+
+## 📚 Documentation
+
+- **[EXTERNAL-RUN.md](EXTERNAL-RUN.md)**: Complete guide for external k6 runners with examples
+- **[DEPLOYMENT-SUMMARY.md](DEPLOYMENT-SUMMARY.md)**: What changed and deployment details
+- **[VERIFICATION-CHECKLIST.md](VERIFICATION-CHECKLIST.md)**: Step-by-step verification guide
+- **[k8s/outputs/README.md](k8s/outputs/README.md)**: Detailed configuration reference
+
+---
+
+## 🐛 Troubleshooting
+
+### Pods Not Starting
 
 ```bash
-# Copy results from pods
-kubectl -n k6-tests cp <pod-name>:/tmp/results.json ./results.json
-
-# View results with jq (if installed)
-kubectl -n k6-tests logs <pod-name> | jq '.metrics'
+kubectl -n k6-tests describe pod <pod-name>
+kubectl -n k6-tests get events --sort-by='.lastTimestamp'
 ```
 
-## 🎯 Scaling Workers
+### No Data in Grafana
 
-### Dynamic Scaling
-
-```bash
-# Scale to 5 pods
-kubectl apply -k k8s/overlays/basic/scale-5
-
-# Scale to 10 pods
-kubectl apply -k k8s/overlays/basic/scale-10
-
-# Scale to 20 pods
-kubectl apply -k k8s/overlays/advanced/scale-20
-```
-
-### Performance Considerations
-
-- **CPU**: Each pod consumes CPU resources
-- **Memory**: Workers share the test script and data
-- **Network**: More pods = more network load
-- **Target**: Ensure your target system can handle the load
-
-## 🔍 Troubleshooting
-
-### Common Issues
-
-1. **k6-operator not found**:
+1. Check time range (use "Last 1 hour")
+2. Verify InfluxDB has data:
    ```bash
-   kubectl get pods -n k6-operator-system
-   make install-operator
+   kubectl -n k6-tests exec deployment/influxdb -- \
+     influx query 'from(bucket:"k6-metrics") |> range(start:-24h) |> count()' --org k6-org
    ```
+3. Test datasource connection in Grafana
 
-2. **TestRun not starting**:
-   ```bash
-   kubectl -n k6-tests describe testrun k6-basic-test
-   kubectl -n k6-tests get events
-   ```
-
-3. **Pods in Pending state**:
-   ```bash
-   kubectl -n k6-tests describe pods
-   kubectl top nodes
-   ```
-
-4. **Script not found**:
-   ```bash
-   kubectl -n k6-tests get configmap k6-scripts
-   kubectl -n k6-tests get configmap k6-scripts -o yaml
-   ```
-
-### Debug Mode
+### Authentication Errors
 
 ```bash
-# Check operator logs
-kubectl -n k6-operator-system logs deployment/k6-operator-controller-manager
+# Verify token
+kubectl -n k6-tests get secret influxdb-auth -o jsonpath='{.data.admin-token}' | base64 -d
 
-# Describe TestRun for detailed status
-kubectl -n k6-tests describe testrun k6-basic-test
-
-# Check pod logs with timestamps
-kubectl -n k6-tests logs -l testrun=k6-basic-test --timestamps
+# Ensure token matches in k6 command
 ```
 
-## 📚 Custom Test Scripts
+---
 
-### Creating Your Own Test
+## 📦 Project Structure
 
-1. Create a new file in `scripts/` directory
-2. Use k6 JavaScript API
-3. Export `options` for test configuration
-4. Export `default` function for test logic
-5. Optionally export `handleSummary` for custom result handling
-
-### Example Custom Test
-
-```javascript
-import http from 'k6/http';
-import { check } from 'k6';
-
-export const options = {
-  stages: [
-    { duration: '1m', target: 20 },
-    { duration: '2m', target: 20 },
-    { duration: '1m', target: 0 },
-  ],
-};
-
-export default function () {
-  const response = http.get('https://your-api.com/endpoint');
-  check(response, {
-    'status is 200': (r) => r.status === 200,
-  });
-}
+```
+k6/
+├── k8s/
+│   ├── namespace.yaml              # k6-tests namespace
+│   ├── kustomization.yaml          # Main deployment config
+│   └── outputs/
+│       ├── influxdb-deployment.yaml # InfluxDB v2 + PVC + Ingress
+│       ├── grafana-deployment.yaml  # Grafana + 5 dashboards + PVC
+│       └── README.md               # Configuration details
+├── scripts/                        # Utility scripts
+│   ├── setup-full-stack.sh        # Automated setup
+│   ├── export-results.sh          # Export results
+│   └── ...
+├── EXTERNAL-RUN.md                 # External runner guide
+├── DEPLOYMENT-SUMMARY.md           # Deployment details
+├── VERIFICATION-CHECKLIST.md       # Verification steps
+└── README.md                       # This file
 ```
 
-## 🔗 Official Documentation
+---
 
-This setup follows the official Grafana k6 documentation:
-- [Running Distributed Tests](https://grafana.com/docs/k6/latest/testing-guides/running-distributed-tests/)
-- [k6-operator GitHub](https://github.com/grafana/k6-operator)
-- [k6 Docker Hub](https://hub.docker.com/r/grafana/k6)
-- [k6 JavaScript API](https://grafana.com/docs/k6/latest/javascript-api/)
+## ✅ Features
+
+- ✅ **Persistent Storage**: PVCs for both InfluxDB and Grafana
+- ✅ **Multi-Tenant**: 6 separate buckets for team isolation
+- ✅ **Pre-Configured**: 5 ready-to-use Grafana dashboards
+- ✅ **Secure**: Token-based authentication, Kubernetes Secrets
+- ✅ **Scalable**: Kubernetes-native resource management
+- ✅ **Production-Ready**: Health checks, resource limits, persistent data
+
+---
+
+## 🎯 Use Cases
+
+Perfect for:
+- Centralized k6 metrics collection across teams
+- Long-term performance trend analysis
+- CI/CD integration for automated testing
+- Multi-team load testing with separate dashboards
+- Historical data retention and compliance
+
+---
 
 ## 📝 Notes
 
-- Test scripts are stored as Kubernetes ConfigMaps
-- Results are available through pod logs and optional external outputs
-- The k6-operator coordinates all pods automatically
-- Each pod executes a unique shard of the test
-- All containers use the official `grafana/k6:latest` image
-- Health checks ensure proper startup sequence
+- **No test scripts included** - This is infrastructure only
+- **External runners** send metrics via InfluxDB v2 output
+- **Data persistence** via PersistentVolumeClaims
+- **Auto-provisioned** dashboards on Grafana startup
+- **Token-based auth** only (no username/password for InfluxDB)
 
-## 🐳 Docker Compose Alternative
+---
 
-For local development and testing without Kubernetes, the Docker Compose setup is still available in the `docker-compose.yml` file. However, the Kubernetes + k6-operator approach is the official and recommended method for distributed testing.
+## 🆘 Support
 
-To use Docker Compose:
-```bash
-# Run with Docker Compose (non-official distribution)
-docker-compose up --scale worker=3
-```
+For issues:
+1. Check [EXTERNAL-RUN.md](EXTERNAL-RUN.md) for common questions
+2. Review [VERIFICATION-CHECKLIST.md](VERIFICATION-CHECKLIST.md) for validation
+3. Check logs: `kubectl -n k6-tests logs deployment/<component>`
+4. Verify resources: `kubectl -n k6-tests get all`
 
-**Note**: The Docker Compose approach is provided for local development only and is not the official distributed testing method.
+---
+
+**Made for DevOps Teams** | **Production-Ready** | **Always-On Monitoring** 🚀

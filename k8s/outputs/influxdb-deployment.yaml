@@ -1,0 +1,230 @@
+# InfluxDB v2 Deployment for External k6 Metrics Storage
+# This is an always-on database for receiving metrics from external k6 runners
+
+---
+# Secret for InfluxDB v2 admin credentials
+# In production, create this secret manually or use sealed-secrets/external-secrets
+apiVersion: v1
+kind: Secret
+metadata:
+  name: influxdb-auth
+  namespace: k6-tests
+  labels:
+    app.kubernetes.io/name: influxdb
+    app.kubernetes.io/component: database
+type: Opaque
+stringData:
+  # Admin token for InfluxDB v2 API access
+  # IMPORTANT: Change this in production!
+  admin-token: "k6-super-secret-admin-token-change-me"
+  # Admin password for UI access
+  admin-password: "influxdb-admin-password-change-me"
+  # Admin username
+  admin-user: "admin"
+  # Organization name
+  org: "k6-org"
+  # Default bucket for k6 metrics
+  bucket: "k6-metrics"
+
+---
+# ConfigMap for InfluxDB v2 initialization
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: influxdb-config
+  namespace: k6-tests
+  labels:
+    app.kubernetes.io/name: influxdb
+    app.kubernetes.io/component: database
+data:
+  # Additional buckets for different teams/reports
+  init-buckets.sh: |
+    #!/bin/bash
+    set -e
+    
+    echo "Waiting for InfluxDB to be ready..."
+    until curl -f http://localhost:8086/health; do
+      sleep 2
+    done
+    
+    echo "Creating additional buckets for teams..."
+    
+    # Create buckets for different teams/reports (using the admin token)
+    influx bucket create -n team1-metrics -o ${DOCKER_INFLUXDB_INIT_ORG} -t ${DOCKER_INFLUXDB_INIT_ADMIN_TOKEN} || true
+    influx bucket create -n team2-metrics -o ${DOCKER_INFLUXDB_INIT_ORG} -t ${DOCKER_INFLUXDB_INIT_ADMIN_TOKEN} || true
+    influx bucket create -n team3-metrics -o ${DOCKER_INFLUXDB_INIT_ORG} -t ${DOCKER_INFLUXDB_INIT_ADMIN_TOKEN} || true
+    influx bucket create -n team4-metrics -o ${DOCKER_INFLUXDB_INIT_ORG} -t ${DOCKER_INFLUXDB_INIT_ADMIN_TOKEN} || true
+    influx bucket create -n team5-metrics -o ${DOCKER_INFLUXDB_INIT_ORG} -t ${DOCKER_INFLUXDB_INIT_ADMIN_TOKEN} || true
+    
+    echo "Buckets created successfully!"
+
+---
+# InfluxDB v2 Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: influxdb
+  namespace: k6-tests
+  labels:
+    app.kubernetes.io/name: influxdb
+    app.kubernetes.io/component: database
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8086
+    targetPort: 8086
+    name: http
+  selector:
+    app.kubernetes.io/name: influxdb
+    app.kubernetes.io/component: database
+
+---
+# InfluxDB v2 Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: influxdb
+  namespace: k6-tests
+  labels:
+    app.kubernetes.io/name: influxdb
+    app.kubernetes.io/component: database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: influxdb
+      app.kubernetes.io/component: database
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: influxdb
+        app.kubernetes.io/component: database
+    spec:
+      containers:
+      - name: influxdb
+        image: influxdb:2.7
+        ports:
+        - containerPort: 8086
+          name: http
+        env:
+        # Initial setup mode for InfluxDB v2
+        - name: DOCKER_INFLUXDB_INIT_MODE
+          value: "setup"
+        - name: DOCKER_INFLUXDB_INIT_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: influxdb-auth
+              key: admin-user
+        - name: DOCKER_INFLUXDB_INIT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: influxdb-auth
+              key: admin-password
+        - name: DOCKER_INFLUXDB_INIT_ORG
+          valueFrom:
+            secretKeyRef:
+              name: influxdb-auth
+              key: org
+        - name: DOCKER_INFLUXDB_INIT_BUCKET
+          valueFrom:
+            secretKeyRef:
+              name: influxdb-auth
+              key: bucket
+        - name: DOCKER_INFLUXDB_INIT_ADMIN_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: influxdb-auth
+              key: admin-token
+        volumeMounts:
+        - name: influxdb-data
+          mountPath: /var/lib/influxdb2
+        - name: influxdb-config
+          mountPath: /docker-entrypoint-initdb.d
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8086
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8086
+          initialDelaySeconds: 30
+          periodSeconds: 30
+      volumes:
+      - name: influxdb-data
+        persistentVolumeClaim:
+          claimName: influxdb-pvc
+      - name: influxdb-config
+        configMap:
+          name: influxdb-config
+          defaultMode: 0755
+
+---
+# PersistentVolumeClaim for InfluxDB data persistence
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: influxdb-pvc
+  namespace: k6-tests
+  labels:
+    app.kubernetes.io/name: influxdb
+    app.kubernetes.io/component: database
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  # storageClassName: standard  # Uncomment and set your storage class
+
+# ---
+# # Ingress for external access to InfluxDB
+# # Allows external k6 runners to send metrics to InfluxDB
+# # COMMENTED OUT: Uncomment and configure when you need external access
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: influxdb-ingress
+#   namespace: k6-tests
+#   labels:
+#     app.kubernetes.io/name: influxdb
+#     app.kubernetes.io/component: ingress
+#   annotations:
+#     # Uncomment for cert-manager automatic TLS
+#     # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+#     
+#     # Nginx ingress specific annotations
+#     nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+#     nginx.ingress.kubernetes.io/ssl-redirect: "true"
+#     
+#     # Increase timeout for long-running k6 tests
+#     nginx.ingress.kubernetes.io/proxy-connect-timeout: "600"
+#     nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+#     nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+# spec:
+#   ingressClassName: nginx  # Change based on your ingress controller
+#   tls:
+#   - hosts:
+#     - influxdb.example.com  # CHANGE THIS to your actual domain
+#     secretName: influxdb-tls
+#   rules:
+#   - host: influxdb.example.com  # CHANGE THIS to your actual domain
+#     http:
+#       paths:
+#       - path: /
+#         pathType: Prefix
+#         backend:
+#           service:
+#             name: influxdb
+#             port:
+#               number: 8086
+
