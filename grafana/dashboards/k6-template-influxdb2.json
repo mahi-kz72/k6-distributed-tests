@@ -1,0 +1,113 @@
+{
+  "title": "k6 - Template (InfluxDB2)",
+  "uid": "k6-template",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "tags": [
+    "k6",
+    "influxdb2",
+    "template"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "script",
+        "type": "query",
+        "datasource": "InfluxDB_k6",
+        "query": "import \"influxdata/influxdb/schema\"\nschema.tagValues(bucket: \"k6\", tag: \"script\")",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": {
+          "text": "All",
+          "value": "All"
+        }
+      },
+      {
+        "name": "api",
+        "type": "query",
+        "datasource": "InfluxDB_k6",
+        "query": "from(bucket: \"k6\")\n  |> range(start: -24h)\n  |> filter(fn: (r) => r._measurement == \"http_req_duration\")\n  |> filter(fn: (r) => exists r.api and r.api != \"\")\n  |> filter(fn: (r) => \"$script\" == \"All\" or contains(value: r.script, set: ${script:json}))\n  |> keep(columns: [\"api\"])\n  |> distinct(column: \"api\")\n  |> sort(columns: [\"api\"])",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": {
+          "text": "All",
+          "value": "All"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "HTTP Req Duration p(95)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": "InfluxDB_k6",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"k6\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"http_req_duration\")\n  |> filter(fn: (r) => r._field == \"value\")\n  |> filter(fn: (r) => \"$script\" == \"All\" or contains(value: r.script, set: ${script:json}))\n  |> filter(fn: (r) => \"$api\" == \"All\" or contains(value: r.api, set: ${api:json}))\n  |> aggregateWindow(every: 10s, fn: mean, createEmpty: false)\n  |> quantile(q: 0.95, method: \"estimate_tdigest\")"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "RPS (http_reqs)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": "InfluxDB_k6",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"k6\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"http_reqs\")\n  |> filter(fn: (r) => r._field == \"value\")\n  |> filter(fn: (r) => \"$script\" == \"All\" or contains(value: r.script, set: ${script:json}))\n  |> filter(fn: (r) => \"$api\" == \"All\" or contains(value: r.api, set: ${api:json}))\n  |> aggregateWindow(every: 10s, fn: sum, createEmpty: false)\n  |> map(fn: (r) => ({ r with _value: float(v: r._value) / 10.0 }))"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP Failure Rate",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": "InfluxDB_k6",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "total = from(bucket: \"k6\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"http_reqs\")\n  |> filter(fn: (r) => r._field == \"value\")\n  |> filter(fn: (r) => \"$script\" == \"All\" or contains(value: r.script, set: ${script:json}))\n  |> filter(fn: (r) => \"$api\" == \"All\" or contains(value: r.api, set: ${api:json}))\n  |> aggregateWindow(every: 30s, fn: sum, createEmpty: false)\n\nfailed = from(bucket: \"k6\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"http_req_failed\")\n  |> filter(fn: (r) => r._field == \"value\")\n  |> filter(fn: (r) => \"$script\" == \"All\" or contains(value: r.script, set: ${script:json}))\n  |> filter(fn: (r) => \"$api\" == \"All\" or contains(value: r.api, set: ${api:json}))\n  |> aggregateWindow(every: 30s, fn: mean, createEmpty: false)\n\njoin(tables: {total: total, failed: failed}, on: [\"_time\",\"script\",\"api\"])\n  |> map(fn: (r) => ({ _time: r._time, _value: r._value_failed, script: r.script, api: r.api }))"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "VU Count",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "datasource": "InfluxDB_k6",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"k6\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"vus\")\n  |> filter(fn: (r) => r._field == \"value\")\n  |> filter(fn: (r) => \"$script\" == \"All\" or contains(value: r.script, set: ${script:json}))\n  |> aggregateWindow(every: 10s, fn: mean, createEmpty: false)"
+        }
+      ]
+    }
+  ]
+}

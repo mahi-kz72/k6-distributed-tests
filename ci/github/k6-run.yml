@@ -1,0 +1,36 @@
+name: k6 run (central)
+
+on:
+  workflow_call:
+    inputs:
+      script:
+        required: true
+        type: string
+      script_name:
+        required: true
+        type: string
+      team:
+        required: false
+        type: string
+        default: "unknown"
+
+jobs:
+  k6:
+    runs-on: ubuntu-latest
+    container:
+      image: perf/k6-runner:latest
+    env:
+      K6_SCRIPT: ${{ inputs.script }}
+      K6_SCRIPT_NAME: ${{ inputs.script_name }}
+      K6_TEAM: ${{ inputs.team }}
+      K6_INFLUXDB_ADDR: http://influxdb.perf.svc.cluster.local:8086
+      K6_INFLUXDB_ORG: perf-org
+      K6_INFLUXDB_BUCKET: k6
+      K6_INFLUXDB_TOKEN: ${{ secrets.K6_INFLUXDB_TOKEN }}
+      GRAFANA_URL: https://grafana.perf.internal
+      GRAFANA_TOKEN: ${{ secrets.GRAFANA_TOKEN }}
+      AUTO_CREATE_DASHBOARD: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - run: /entrypoint.sh
+      - run: tools/create-dashboard.sh

@@ -1,0 +1,18 @@
+influxdb:
+  image: influxdb:2.7
+  storageSize: 20Gi
+  adminUser: admin
+  adminPassword: adminadmin
+  org: perf-org
+  bucket: k6
+  retention: 30d
+
+grafana:
+  image: grafana/grafana:11.2.0
+  storageSize: 10Gi
+  adminUser: admin
+  adminPassword: admin
+  serviceType: ClusterIP
+  ingress:
+    enabled: false
+    host: grafana.perf.internal
