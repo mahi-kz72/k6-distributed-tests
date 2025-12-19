@@ -39,6 +39,8 @@ k6 jobs are ephemeral; Grafana/InfluxDB remain up for browsing history.
 ├─ ci/
 │  ├─ gitlab/k6-run.yml            # reusable GitLab template
 │  └─ github/k6-run.yml            # reusable GitHub workflow
+├─ launcher/                       # Web UI for launching k6 tests
+│  └─ frontend/                    # Next.js application
 └─ samples/
    ├─ api-smoke.js                 # 3 API sample
    └─ api-load.js                  # 2 API sample
@@ -106,6 +108,43 @@ docker run --rm   -e K6_SCRIPT=/work/samples/api-load.js   -e K6_SCRIPT_NAME=api
 3. Select:
    - `script`: `api-smoke` or `api-load`
    - `api`: pick specific endpoint or `All`
+
+---
+
+## Web UI Launcher (Optional)
+
+A clean web interface for launching k6 tests without writing code.
+
+### Quick Start
+
+1. **Set the InfluxDB token in docker-compose:**
+   ```bash
+   # Edit infra/docker-compose.local.yml and set K6_INFLUXDB_TOKEN
+   ```
+
+2. **Start all services (including launcher):**
+   ```bash
+   docker compose -f infra/docker-compose.local.yml up -d
+   ```
+
+3. **Access the launcher UI:**
+   - Open http://localhost:3001
+   - Enter your API endpoint and configure load profile
+   - Click "Run Load Test"
+   - View results via the Grafana link
+
+### Local Development (Launcher)
+
+For local development of the launcher:
+
+```bash
+cd launcher
+npm install
+# Create .env.local with your InfluxDB token
+npm run dev
+```
+
+See `launcher/README.md` for detailed documentation.
 
 ---
 
